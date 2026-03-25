@@ -1,22 +1,59 @@
 import torch
 from torch import Tensor
 import torch.nn as nn
+from torch_geometric.data import Data
+from torch_geometric.nn import MessagePassing, global_add_pool
+import  torch.optim as optim
+
+import pandas as pd
+from torch.utils.data import DataLoader
+from torch_geometric.data import InMemoryDataset
+from torch_geometric.loader import DataLoader
+
+
 from rdkit import Chem
-from utils import create_dataloader
+from tqdm.auto import tqdm
+# from utils import create_dataloader
 
 
 # setting a hyperparameter
 cfg = {
-    "mpnn_hop": 3,
-    "epoch_count": 50
+    "hop_count": 3,
+    "epoch_count": 20
 }
 
 
-def mol_to_graph(smiles: str) -> Tensor:
+class MoleculeDataset(InMemoryDataset):
+    def __init__(self, data_list):
+        super().__init__()
+        self.data, self.slices = self.collate(data_list)
+
+
+
+def create_dataloader(dataset, batch_size, IsShffle=True) -> DataLoader:
+    dataset = MoleculeDataset(
+        [mol_to_graph(data[0], list(data[1:])) for data in dataset]
+    )
+
+    data_loader = DataLoader(
+        dataset=dataset,
+        batch_size=batch_size,
+        shuffle=IsShffle
+    )
+    return data_loader
+
+
+def data_load(path: str, targets: list[str]) -> list:
+    df = pd.read_csv(path)
+    dataset = df[targets].values.tolist()
+    return dataset
+
+
+def mol_to_graph(smiles: str, y: Tensor) -> Data:
     mol = Chem.MolFromSmiles(smiles)
 
     node_feature = []
-    edge_feature = []
+    edge_attr    = []
     edge_index   = []
 
 
@@ -29,11 +66,11 @@ def mol_to_graph(smiles: str) -> Tensor:
             atom.GetFormalCharge(),
             int(atom.GetIsAromatic())
         ])
+
     for bond in mol.GetBonds():
         bond: Chem.rdchem.Bond
         i = bond.GetBeginAtomIdx()
         j = bond.GetEndAtomIdx()
-
 
         bond_feature = [
             int(bond.GetBondTypeAsDouble()),
@@ -42,18 +79,20 @@ def mol_to_graph(smiles: str) -> Tensor:
         ]
 
         edge_index.append([i, j])
-        edge_index.append([i, j])
-        edge_feature.append(bond_feature)
-        edge_feature.append(bond_feature)
-    return (
-        torch.tensor(node_feature, dtype=torch.float),
-        torch.tensor(edge_feature, dtype=torch.float),
-        torch.tensor(edge_index, dtype=torch.long).t(),
+        edge_index.append([j, i])
+        edge_attr.append(bond_feature)
+        edge_attr.append(bond_feature)
+
+
+    return Data(
+        x=torch.tensor(node_feature, dtype=torch.float),
+        edge_index=torch.tensor(edge_index, dtype=torch.long).t().contiguous(),
+        edge_attr=torch.tensor(edge_attr, dtype=torch.float),
+        y=torch.tensor([y], dtype=torch.float) 
     )
 
 
-
-class DMPNN(nn.Module):
+class DMPNN(MessagePassing):
     def __init__(self, atom_dim, bond_dim, hidden_dim,
                  W_bias=False):
         super().__init__()
@@ -63,104 +102,139 @@ class DMPNN(nn.Module):
         self.W_a = nn.Linear(atom_dim + hidden_dim, hidden_dim, bias=W_bias)
 
 
-    def forward(self, node_feature, edge_featrue, edge_index, cfg):
-        start_nodes, end_nodes = edge_index
+    def forward(self, x, edge_index, edge_attr, cfg): #node_feature, edge_featrue,):
+        h = torch.cat([x[edge_index[0]], edge_attr], dim=1)
+        h = self.W_i(h)
+        h = torch.nn.functional.relu(h)
 
-        h = torch.cat([node_feature[start_nodes], edge_featrue], dim=1)
-        h = torch.nn.functional.relu(self.W_i(h))
+        for _ in range(cfg["hop_count"]):
+            h = self.propagate(edge_index, h=h)
+        node_emb = torch.zeros(x.size(0), h.size(1), device=x.device)
 
-        for _ in range(cfg["mpnn_hop"]):
-            new_h = []
+        for i in range(edge_index.size(1)):
+            dst = edge_index[1, i]
+            node_emb[dst] += h[i]
 
-            for i in range(h.size(0)):
-                v = start_nodes[i]
-                w = end_nodes[i]
+        node_emb = torch.cat([x, node_emb], dim=1)
+        node_emb = self.W_a(node_emb)
+        node_emb = torch.relu(node_emb)
 
-                incoming = (end_nodes == v) & (start_nodes != w)
+        return node_emb
+    
 
-                if incoming.sum() == 0:
-                    m = torch.zeros_like(h[i])
-                else:
-                    m = h[incoming].sum(dim=0)
-
-                new_h.append(torch.nn.functional.relu(self.W_m(m)))
-
-            h = torch.stack(new_h)
-
-            node_emb = []
-            for v in range(x.size(0)):
-                incoming = (end_nodes == v)
-                if incoming.sum() == 0:
-                    m = torch.zeros(h.size(1))
-                else:
-                    m = h[incoming].sum(dim=0)
-
-                hv = torch.cat([x[v], m], dim=0)
-                node_emb.append(torch.nn.functional.relu(self.W_a(hv)))
-
-            node_emb = torch.stack(node_emb)
-
-            # molecule embedding
-            mol_emb = node_emb.sum(dim=0)
-            return mol_emb
+    def message(self, h_j):
+        h = self.W_m(h_j)
+        h = torch.nn.functional.relu(h)
+        return h
 
 
 
-class PredictModel(nn.Module):
-    def __init__(self):
+
+class FeedForward(nn.Module):
+    def __init__(self, in_dim, drop_rate):
         super().__init__()
-        self.gnn = DMPNN(atom_dim=4, bond_dim=3, hidden_dim=64)
-
-        self.ffn = nn.Sequential(
-        nn.Linear(64, 64),
+        self.layers = nn.Sequential(
+        nn.Linear(in_dim, 4*in_dim),
         nn.ReLU(),
-        nn.Linear(64, 1)
+        nn.Dropout(drop_rate),
+        nn.Linear(4*in_dim, in_dim),
+        )
+    
+    def forward(self, x):
+        return self.layers(x)
+
+
+
+class LayerNorm(nn.Module):
+    def __init__(self, emb_dim):
+        super().__init__()
+        self.eps = 1e-5
+        self.scale = nn.Parameter(torch.ones(emb_dim))
+        self.shift = nn.Parameter(torch.zeros(emb_dim))
+
+    def forward(self, x):
+        mean = x.mean(dim=-1, keepdim=True)
+        var = x.var(dim=-1, keepdim=True, unbiased=False)
+        norm_x = (x - mean) / torch.sqrt(var + self.eps)
+        return self.scale * norm_x + self.shift 
+
+
+
+
+class ChemModel(nn.Module):
+    def __init__(self, in_dim, out_dim, drop_rate=0.2):
+        super().__init__()
+        self.gnn = DMPNN(
+            atom_dim=4,
+            bond_dim=3,
+            hidden_dim=in_dim
         )
 
-    def forward(self, x, edge_attr, edge_index, cfg):
-        model_emb = self.gnn(x, edge_attr, edge_index, cfg)
-        return self.ffn(model_emb)
+        self.ffn = FeedForward(in_dim, drop_rate)
+
+        self.last_layer = nn.Linear(in_dim, out_dim)
 
 
-data = [
-    ("CCO", 0.5),
-    ("CC", 0.2),
-    ("CCC", 0.3),
-    ("c1ccccc1", 0.8)
-]
+    def forward(self, data: Data, cfg):
+        x = data.x
+        edge_index = data.edge_index
+        edge_attr = data.edge_attr
+        batch = data.batch
 
-model = PredictModel()
-optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
-loss_fn = nn.MSELoss()
+        h = self.gnn(x, edge_index, edge_attr, cfg)
+        h = global_add_pool(h, batch)
+        h
+        h = self.ffn(h)
+        h = self.last_layer(h)
 
-for epoch in range(cfg["epoch_count"]):
-    total_loss = 0
+        return h
 
-    for smiles, y in data:
-        x, edge_attr, edge_index = mol_to_graph(smiles)
 
-        pred = model(x, edge_attr, edge_index)
-
-        target = torch.tensor([y], dtype=torch.float)
-
-        loss = loss_fn(pred, target)
-
-        optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
-
-        total_loss += loss.item()
-
-    print(f"Epoch {epoch}: Loss = {total_loss:.4f}")
-
-# 4. 테스트 실행
 
 if __name__ == "__main__":
-    smiles = "CCO"  # 에탄올
+    target_propertys = [
+        "smiles",
+        "Molecular Weight",
+        "ESOL predicted log solubility in mols per litre",
+        "Number of Rings"
+    ]
 
-    x, edge_attr, edge_index = mol_to_graph(smiles)
+    dataset = data_load("data/delaney-processed.csv", target_propertys)
+    
+    train_ratio = 0.8
+    split_idx = int(train_ratio*len(dataset))
+    train_data = dataset[:split_idx]
+    test_data = dataset[split_idx:]
 
-    model = PredictModel()
-    out = model(x, edge_attr, edge_index, cfg)
+    model = ChemModel(
+        in_dim=64,
+        out_dim=len(target_propertys)-1 
+    )
 
-    print("예측값:", out.item())
+    optimizer = optim.Adam(model.parameters(), lr=1e-3)
+    loss_fn = nn.MSELoss()
+    for _ in range(cfg["epoch_count"]):
+        loader = tqdm(create_dataloader(train_data, batch_size=32))
+        for batch in loader:
+            pred = model(batch, cfg)
+            loss = loss_fn(pred.squeeze(), batch.y)
+
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+
+
+    model.eval()
+
+    test_loader = tqdm(create_dataloader(test_data, batch_size=32))
+
+    with torch.no_grad():
+        total_loss = 0
+
+        for batch in test_loader:
+            pred = model(batch, cfg)
+            loss = loss_fn(pred.squeeze(), batch.y)
+
+            total_loss += loss.item()
+
+    print("Test Loss:", total_loss)

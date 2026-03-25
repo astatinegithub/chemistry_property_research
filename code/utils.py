@@ -1,19 +1,33 @@
 import pandas as pd
 from torch.utils.data import DataLoader
+from torch_geometric.data import InMemoryDataset
+from torch_geometric.loader import DataLoader
+import torch
 
 
-def create_dataloader(data_path, batch_size, IsShffle=True):
-    data = pd.read_csv(data_path)
-    data_loader = DataLoader(
-        dataset=data["smiles"],
-        batch_size=batch_size,
-        shuffle=IsShffle
-    )
-    return data_loader
+# target_propertys = ["smiles", "Molecular Weight"]
 
 
-if __name__ == "__main__":
-    # test
-    path = "data/delaney-processed.csv"
-    for i in create_dataloader(path, batch_size=32):
-        print(i)
+# data_path="data/delaney-processed.csv"
+# df = pd.read_csv(data_path)
+# dataset = df[target_propertys].values.tolist()
+# for i in dataset:
+#     print(i)
+target_propertys = [
+        "smiles",
+        "Molecular Weight",
+        "ESOL predicted log solubility in mols per litre",
+        "Number of Rings"
+    ]
+data_path="data/delaney-processed.csv"
+df = pd.read_csv(data_path)
+# print(df.info())
+print(target_propertys[0],target_propertys[1:])
+import json
+
+with open("data/PubChem_compound_ethanol.json", "r", encoding="utf-8") as file:
+    data = json.load(file)
+data = pd.DataFrame(data)
+print(data.info())
+data.dropna()
+print(data.info())
