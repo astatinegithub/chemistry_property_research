@@ -23,6 +23,7 @@ cfg = {
     "epoch_count": 20
 }
 
+# gpu setting
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
@@ -62,6 +63,7 @@ def data_load_json(path: str, targets: list[str]) -> list:
 
     df = df[mask]
     df = df[target_propertys].values.tolist()
+
     return df
 
 
@@ -118,7 +120,8 @@ class DMPNN(MessagePassing):
         self.W_a = nn.Linear(atom_dim + hidden_dim, hidden_dim, bias=W_bias)
 
 
-    def forward(self, x, edge_index, edge_attr, cfg): #node_feature, edge_featrue,):
+    def forward(self, x: Tensor, edge_index: Tensor,
+                 edge_attr: Tensor, cfg: dict):
         h = torch.cat([x[edge_index[0]], edge_attr], dim=1)
         h = self.W_i(h)
         h = torch.nn.functional.relu(h)
@@ -127,9 +130,7 @@ class DMPNN(MessagePassing):
             h = self.propagate(edge_index, h=h)
         node_emb = torch.zeros(x.size(0), h.size(1), device=x.device)
 
-        for i in range(edge_index.size(1)):
-            dst = edge_index[1, i]
-            node_emb[dst] += h[i]
+        node_emb.index_add_(0, edge_index[1], h)
 
         node_emb = torch.cat([x, node_emb], dim=1)
         node_emb = self.W_a(node_emb)
@@ -208,19 +209,12 @@ class ChemModel(nn.Module):
 
 
 if __name__ == "__main__":
-    # target_propertys = [
-    #     "smiles",
-    #     "Molecular Weight",
-    #     "ESOL predicted log solubility in mols per litre",
-    #     "Number of Rings"
-    # ]
-    # path = "data/delaney-processed.csv"
     target_propertys = [
         "smiles",
         "mw",
         "xlogp",
     ]
-    # path = "data/PubChem_compound_ethanol.json"
+
     path = "data/processed_dataset.csv"
 
     slice_size = 200000 
@@ -241,8 +235,15 @@ if __name__ == "__main__":
 
     optimizer = optim.Adam(model.parameters(), lr=1e-3)
     loss_fn = nn.MSELoss()
+
+    graph_data = [mol_to_graph(data[0], list(data[1:])) for data in dataset]
+
+    dataset = MoleculeDataset(graph_data)
+
+    train_loader = DataLoader(dataset, batch_size=32, shuffle=True)
+
     for _ in range(cfg["epoch_count"]):
-        loader = tqdm(create_dataloader(train_data, batch_size=32))
+        loader = train_loader
         for batch in loader:
             batch = batch.to(device) # 배치 GPU사용 가능하게 만들기
             pred = model(batch, cfg)
