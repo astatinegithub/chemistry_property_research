@@ -3,7 +3,7 @@ from torch import Tensor
 import torch.nn as nn
 from torch_geometric.data import Data
 from torch_geometric.nn import MessagePassing, global_add_pool
-import  torch.optim as optim
+import torch.optim as optim
 
 import pandas as pd
 import json
@@ -142,7 +142,6 @@ class DMPNN(MessagePassing):
         h = self.W_m(h_j)
         h = torch.nn.functional.relu(h)
         return h
-
 
 
 
