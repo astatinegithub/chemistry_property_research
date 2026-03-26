@@ -35,9 +35,8 @@ class MoleculeDataset(InMemoryDataset):
 
 
 def create_dataloader(dataset, batch_size, IsShffle=True) -> DataLoader:
-    dataset = MoleculeDataset(
-        [mol_to_graph(data[0], list(data[1:])) for data in dataset]
-    )
+    dataset = [mol_to_graph(data[0], list(data[1:])) for data in dataset]
+    dataset = MoleculeDataset(dataset)
 
     data_loader = DataLoader(
         dataset=dataset,
@@ -214,37 +213,34 @@ if __name__ == "__main__":
         "mw",
         "xlogp",
     ]
-
     path = "data/processed_dataset.csv"
 
-    slice_size = 200000 
 
-    dataset = data_load_csv(path, target_propertys, slice_size)
-    
+    slice_size = 200000 
+    dataset = data_load_csv(path, target_propertys, slice_size)    
     train_ratio = 0.8
     split_idx = int(train_ratio*len(dataset))
     train_data = dataset[:split_idx]
     test_data = dataset[split_idx:]
 
+
     model = ChemModel(
         in_dim=64,
         out_dim=len(target_propertys)-1 
     )
-
     model = model.to(device)
+
 
     optimizer = optim.Adam(model.parameters(), lr=1e-3)
     loss_fn = nn.MSELoss()
 
-    graph_data = [mol_to_graph(data[0], list(data[1:])) for data in dataset]
 
-    dataset = MoleculeDataset(graph_data)
+    train_loader = create_dataloader(train_data, batch_size=32) 
 
-    train_loader = DataLoader(dataset, batch_size=32, shuffle=True)
 
     for _ in range(cfg["epoch_count"]):
         loader = train_loader
-        for batch in loader:
+        for batch in tqdm(loader):
             batch = batch.to(device) # 배치 GPU사용 가능하게 만들기
             pred = model(batch, cfg)
             loss = loss_fn(pred, batch.y)
@@ -253,18 +249,20 @@ if __name__ == "__main__":
             loss.backward()
             optimizer.step()
     
-    torch.save(model, 'save/model.pth')
+    torch.save(model.state_dict(), 'save/model.pth')
+
 
     model.eval()
+    test_loader = create_dataloader(test_data, batch_size=32)
 
-    test_loader = tqdm(create_dataloader(test_data, batch_size=32))
 
     with torch.no_grad():
         total_loss = 0
-
-        for batch in test_loader:
+        loader = test_loader
+        for batch in tqdm(loader):
+            batch = batch.to(device) # 배치 GPU사용 가능하게 만들기
             pred = model(batch, cfg)
-            loss = loss_fn(pred.squeeze(), batch.y)
+            loss = loss_fn(pred, batch.y)
 
             total_loss += loss.item()
 
