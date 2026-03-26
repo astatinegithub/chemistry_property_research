@@ -6,6 +6,7 @@ from torch_geometric.nn import MessagePassing, global_add_pool
 import  torch.optim as optim
 
 import pandas as pd
+import json
 from torch.utils.data import DataLoader
 from torch_geometric.data import InMemoryDataset
 from torch_geometric.loader import DataLoader
@@ -43,13 +44,26 @@ def create_dataloader(dataset, batch_size, IsShffle=True) -> DataLoader:
     return data_loader
 
 
-def data_load(path: str, targets: list[str]) -> list:
+def data_load_csv(path: str, targets: list[str], slice_size:int) -> list:
     df = pd.read_csv(path)
-    dataset = df[targets].values.tolist()
+    dataset = df[targets].values.tolist()[:slice_size]
     return dataset
 
 
-def mol_to_graph(smiles: str, y: Tensor) -> Data:
+def data_load_json(path: str, targets: list[str]) -> list:
+    with open(path, "r", encoding="utf-8") as file:
+        data = json.load(file)
+    data = pd.DataFrame(data)
+    df = data[data["xlogp"] != ""]
+    df = df.astype({"mw": "float64", "xlogp":"float64"})
+    mask = df["smiles"].map(lambda s: Chem.MolFromSmiles(s) is not None)
+
+    df = df[mask]
+    df = df[target_propertys].values.tolist()
+    return df
+
+
+def mol_to_graph(smiles: str, y: list) -> Data:
     mol = Chem.MolFromSmiles(smiles)
 
     node_feature = []
@@ -88,7 +102,7 @@ def mol_to_graph(smiles: str, y: Tensor) -> Data:
         x=torch.tensor(node_feature, dtype=torch.float),
         edge_index=torch.tensor(edge_index, dtype=torch.long).t().contiguous(),
         edge_attr=torch.tensor(edge_attr, dtype=torch.float),
-        y=torch.tensor([y], dtype=torch.float) 
+        y=torch.tensor(y, dtype=torch.float).view(1, -1),
     )
 
 
@@ -192,14 +206,24 @@ class ChemModel(nn.Module):
 
 
 if __name__ == "__main__":
+    # target_propertys = [
+    #     "smiles",
+    #     "Molecular Weight",
+    #     "ESOL predicted log solubility in mols per litre",
+    #     "Number of Rings"
+    # ]
+    # path = "data/delaney-processed.csv"
     target_propertys = [
         "smiles",
-        "Molecular Weight",
-        "ESOL predicted log solubility in mols per litre",
-        "Number of Rings"
+        "mw",
+        "xlogp",
     ]
+    # path = "data/PubChem_compound_ethanol.json"
+    path = "data/processed_dataset.csv"
 
-    dataset = data_load("data/delaney-processed.csv", target_propertys)
+    slice_size = 200000 
+
+    dataset = data_load_csv(path, target_propertys, slice_size)
     
     train_ratio = 0.8
     split_idx = int(train_ratio*len(dataset))
@@ -217,12 +241,13 @@ if __name__ == "__main__":
         loader = tqdm(create_dataloader(train_data, batch_size=32))
         for batch in loader:
             pred = model(batch, cfg)
-            loss = loss_fn(pred.squeeze(), batch.y)
+            loss = loss_fn(pred, batch.y)
 
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
-
+    
+    torch.save(model, 'save/model.pth')
 
     model.eval()
 
