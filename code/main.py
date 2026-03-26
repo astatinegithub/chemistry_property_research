@@ -23,6 +23,8 @@ cfg = {
     "epoch_count": 20
 }
 
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
 
 class MoleculeDataset(InMemoryDataset):
     def __init__(self, data_list):
@@ -235,11 +237,14 @@ if __name__ == "__main__":
         out_dim=len(target_propertys)-1 
     )
 
+    model = model.to(device)
+
     optimizer = optim.Adam(model.parameters(), lr=1e-3)
     loss_fn = nn.MSELoss()
     for _ in range(cfg["epoch_count"]):
         loader = tqdm(create_dataloader(train_data, batch_size=32))
         for batch in loader:
+            batch = batch.to(device) # 배치 GPU사용 가능하게 만들기
             pred = model(batch, cfg)
             loss = loss_fn(pred, batch.y)
 
