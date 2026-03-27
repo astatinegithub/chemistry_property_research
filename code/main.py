@@ -17,6 +17,8 @@ from tqdm.auto import tqdm
 # from utils import create_dataloader
 
 
+
+
 # setting a hyperparameter
 cfg = {
     "hop_count": 3,
@@ -25,6 +27,11 @@ cfg = {
 
 # gpu setting
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+
+# path
+path = "data/processed_dataset.csv"
+
 
 
 class MoleculeDataset(InMemoryDataset):
@@ -160,18 +167,18 @@ class FeedForward(nn.Module):
 
 
 
-class LayerNorm(nn.Module):
-    def __init__(self, emb_dim):
-        super().__init__()
-        self.eps = 1e-5
-        self.scale = nn.Parameter(torch.ones(emb_dim))
-        self.shift = nn.Parameter(torch.zeros(emb_dim))
+# class LayerNorm(nn.Module):
+#     def __init__(self, emb_dim):
+#         super().__init__()
+#         self.eps = 1e-5
+#         self.scale = nn.Parameter(torch.ones(emb_dim))
+#         self.shift = nn.Parameter(torch.zeros(emb_dim))
 
-    def forward(self, x):
-        mean = x.mean(dim=-1, keepdim=True)
-        var = x.var(dim=-1, keepdim=True, unbiased=False)
-        norm_x = (x - mean) / torch.sqrt(var + self.eps)
-        return self.scale * norm_x + self.shift 
+#     def forward(self, x):
+#         mean = x.mean(dim=-1, keepdim=True)
+#         var = x.var(dim=-1, keepdim=True, unbiased=False)
+#         norm_x = (x - mean) / torch.sqrt(var + self.eps)
+#         return self.scale * norm_x + self.shift 
 
 
 
@@ -212,7 +219,7 @@ if __name__ == "__main__":
         "mw",
         "xlogp",
     ]
-    path = "data/processed_dataset.csv"
+    
 
 
     slice_size = 200000 
