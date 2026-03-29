@@ -76,20 +76,19 @@ def data_load_json(path: str, targets: list[str]) -> list:
 def mol_to_graph(smiles: str, y: list) -> Data:
     mol = Chem.MolFromSmiles(smiles)
 
-    node_feature = []
-    edge_attr    = []
-    edge_index   = []
+    node_feature: list 
+    edge_attr: list
+    edge_index: list
 
 
-    for atom in mol.GetAtoms():
-        atom: Chem.rdchem.Atom
+    node_feature = [[
+    atom.GetAtomicNum(),
+    atom.GetDegree(),
+    atom.GetFormalCharge(),
+    int(atom.GetIsAromatic())
+        ]
+          for atom in mol.GetAtoms()]
 
-        node_feature.append([
-            atom.GetAtomicNum(),
-            atom.GetDegree(),
-            atom.GetFormalCharge(),
-            int(atom.GetIsAromatic())
-        ])
 
     for bond in mol.GetBonds():
         bond: Chem.rdchem.Bond
@@ -114,6 +113,7 @@ def mol_to_graph(smiles: str, y: list) -> Data:
         edge_attr=torch.tensor(edge_attr, dtype=torch.float),
         y=torch.tensor(y, dtype=torch.float).view(1, -1),
     )
+
 
 
 class DMPNN(MessagePassing):
@@ -167,22 +167,6 @@ class FeedForward(nn.Module):
 
 
 
-# class LayerNorm(nn.Module):
-#     def __init__(self, emb_dim):
-#         super().__init__()
-#         self.eps = 1e-5
-#         self.scale = nn.Parameter(torch.ones(emb_dim))
-#         self.shift = nn.Parameter(torch.zeros(emb_dim))
-
-#     def forward(self, x):
-#         mean = x.mean(dim=-1, keepdim=True)
-#         var = x.var(dim=-1, keepdim=True, unbiased=False)
-#         norm_x = (x - mean) / torch.sqrt(var + self.eps)
-#         return self.scale * norm_x + self.shift 
-
-
-
-
 class ChemModel(nn.Module):
     def __init__(self, in_dim, out_dim, drop_rate=0.2):
         super().__init__()
@@ -222,7 +206,7 @@ if __name__ == "__main__":
     
 
 
-    slice_size = 200000 
+    slice_size = 600000 
     dataset = data_load_csv(path, target_propertys, slice_size)    
     train_ratio = 0.8
     split_idx = int(train_ratio*len(dataset))
