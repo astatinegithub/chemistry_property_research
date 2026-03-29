@@ -77,8 +77,8 @@ def mol_to_graph(smiles: str, y: list) -> Data:
     mol = Chem.MolFromSmiles(smiles)
 
     node_feature: list 
-    edge_attr: list
-    edge_index: list
+    edge_attr  = []
+    edge_index = []
 
 
     node_feature = [[
