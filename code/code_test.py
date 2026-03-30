@@ -1,59 +1,28 @@
 import torch
 from rdkit import Chem
 from torch_geometric.data import Data
+from main import data_load_csv, path
 
-def mol_to_graph(smiles: str, y: list) -> Data:
-    mol = Chem.MolFromSmiles(smiles)
+slice_size = 100000 
 
-    node_feature: list 
-    edge_attr: list
-    edge_index: list
-
-
-    node_feature = [
-    [
-    atom.GetAtomicNum(),
-    atom.GetDegree(),
-    atom.GetFormalCharge(),
-    int(atom.GetIsAromatic())
+target_propertys = [
+        "smiles",
+        "mw",
+        "xlogp",
     ]
-    for atom in mol.GetAtoms()] # 원자갯수가
+dataset = data_load_csv(path, target_propertys, slice_size)
+
+ys = torch.tensor([data[1:] for data in dataset], dtype=torch.float)
+mean = ys.mean(dim=0)
+std  = ys.std(dim=0)
+y = (ys - mean) / std
 
 
-    for bond in mol.GetBonds():
-        bond: Chem.rdchem.Bond
-        i = bond.GetBeginAtomIdx()
-        j = bond.GetEndAtomIdx()
+train_ratio = 0.8
+split_idx = int(train_ratio*len(dataset))
 
-        bond_feature = [
-            int(bond.GetBondTypeAsDouble()),
-            int(bond.GetIsConjugated()),
-            int(bond.IsInRing())
-        ]
+print(y[:split_idx, :].shape)
+print(y[split_idx:, :].shape)
+print(split_idx)
 
-        edge_index.append([i, j])
-        edge_index.append([j, i])
-        edge_attr.append(bond_feature)
-        edge_attr.append(bond_feature)
-
-
-    return Data(
-        x=torch.tensor(node_feature, dtype=torch.float),
-        edge_index=torch.tensor(edge_index, dtype=torch.long).t().contiguous(),
-        edge_attr=torch.tensor(edge_attr, dtype=torch.float),
-        y=torch.tensor(y, dtype=torch.float).view(1, -1),
-    )
-
-smile = "CCO.C1=CC=NC(=C1)C2=CC=CC=N2.C1=CC=NC(=C1)C2=CC=CC=N2.C1=CC=NC(=C1)C2=CC=CC=N2.C1=CC=NC(=C1)C2=CC=CC=N2.C(#N)[N-]C#N.[O-]Cl(=O)(=O)=O.[O-]Cl(=O)(=O)=O.[O-]Cl(=O)(=O)=O.[Cu+2].[Cu+2]"
-mol = Chem.MolFromSmiles(smile)
-
-atoms = [[
-    atom.GetAtomicNum(),
-    atom.GetDegree(),
-    atom.GetFormalCharge(),
-    int(atom.GetIsAromatic())
-        ]
-          for atom in mol.GetAtoms()]
-atom_tensor = torch.tensor(atoms)
-
-print(atom_tensor.shape)
+print(y)

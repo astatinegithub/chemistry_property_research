@@ -41,8 +41,12 @@ class MoleculeDataset(InMemoryDataset):
 
 
 
-def create_dataloader(dataset, batch_size, IsShffle=True) -> DataLoader:
-    dataset = [mol_to_graph(data[0], list(data[1:])) for data in dataset]
+def create_dataloader(dataset, mean, std ,batch_size, IsShffle=True) -> DataLoader:
+    dataset = [
+        mol_to_graph(data[0], list(data[1:]), mean, std) 
+        for data in dataset
+    ]
+
     dataset = MoleculeDataset(dataset)
 
     data_loader = DataLoader(
@@ -64,7 +68,7 @@ def data_load_json(path: str, targets: list[str]) -> list:
         data = json.load(file)
     data = pd.DataFrame(data)
     df = data[data["xlogp"] != ""]
-    df = df.astype({"mw": "float64", "xlogp":"float64"})
+    df = df.astype({p: "float64" for p in targets})
     mask = df["smiles"].map(lambda s: Chem.MolFromSmiles(s) is not None)
 
     df = df[mask]
@@ -73,21 +77,22 @@ def data_load_json(path: str, targets: list[str]) -> list:
     return df
 
 
-def mol_to_graph(smiles: str, y: list) -> Data:
+def mol_to_graph(smiles: str, y: list, mean: Tensor, std:Tensor) -> Data:
     mol = Chem.MolFromSmiles(smiles)
 
-    node_feature: list 
-    edge_attr  = []
-    edge_index = []
+    node_feature = []
+    edge_attr    = []
+    edge_index   = []
 
 
     node_feature = [[
-    atom.GetAtomicNum(),
-    atom.GetDegree(),
-    atom.GetFormalCharge(),
-    int(atom.GetIsAromatic())
+            atom.GetAtomicNum(),
+            atom.GetDegree(),
+            atom.GetFormalCharge(),
+            int(atom.GetIsAromatic())
         ]
-          for atom in mol.GetAtoms()]
+          for atom in mol.GetAtoms()
+    ]
 
 
     for bond in mol.GetBonds():
@@ -107,11 +112,14 @@ def mol_to_graph(smiles: str, y: list) -> Data:
         edge_attr.append(bond_feature)
 
 
+    y: Tensor = (torch.tensor(y, dtype=torch.float) - mean) / std
+
+
     return Data(
         x=torch.tensor(node_feature, dtype=torch.float),
         edge_index=torch.tensor(edge_index, dtype=torch.long).t().contiguous(),
         edge_attr=torch.tensor(edge_attr, dtype=torch.float),
-        y=torch.tensor(y, dtype=torch.float).view(1, -1),
+        y=y.view(1, -1),
     )
 
 
@@ -128,14 +136,15 @@ class DMPNN(MessagePassing):
 
     def forward(self, x: Tensor, edge_index: Tensor,
                  edge_attr: Tensor, cfg: dict):
+        
         h = torch.cat([x[edge_index[0]], edge_attr], dim=1)
         h = self.W_i(h)
         h = torch.nn.functional.relu(h)
 
         for _ in range(cfg["hop_count"]):
             h = self.propagate(edge_index, h=h)
-        node_emb = torch.zeros(x.size(0), h.size(1), device=x.device)
 
+        node_emb = torch.zeros(x.size(0), h.size(1), device=x.device)
         node_emb.index_add_(0, edge_index[1], h)
 
         node_emb = torch.cat([x, node_emb], dim=1)
@@ -145,8 +154,8 @@ class DMPNN(MessagePassing):
         return node_emb
     
 
-    def message(self, h_j):
-        h = self.W_m(h_j)
+    def message(self, h):
+        h = self.W_m(h)
         h = torch.nn.functional.relu(h)
         return h
 
@@ -181,7 +190,7 @@ class ChemModel(nn.Module):
         self.last_layer = nn.Linear(in_dim, out_dim)
 
 
-    def forward(self, data: Data, cfg):
+    def forward(self, data: Data, cfg: dict):
         x = data.x
         edge_index = data.edge_index
         edge_attr = data.edge_attr
@@ -189,12 +198,26 @@ class ChemModel(nn.Module):
 
         h = self.gnn(x, edge_index, edge_attr, cfg)
         h = global_add_pool(h, batch)
-        h
         h = self.ffn(h)
         h = self.last_layer(h)
 
         return h
+    
 
+
+
+def fit(model, data_loader, loss_fn, cfg, device) -> list:
+    train_loss = []
+    for _ in range(cfg["epoch_count"]):
+        for batch in tqdm(data_loader):
+            batch = batch.to(device) # 배치 GPU사용 가능하게 만들기
+            pred = model(batch, cfg)
+            loss = loss_fn(pred, batch.y)
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+        train_loss.append(loss)
+    return train_loss
 
 
 if __name__ == "__main__":
@@ -206,8 +229,15 @@ if __name__ == "__main__":
     
 
 
-    slice_size = 600000 
-    dataset = data_load_csv(path, target_propertys, slice_size)    
+    slice_size = 100000 
+    dataset = data_load_csv(path, target_propertys, slice_size)
+
+
+    ys = torch.tensor([data[1:] for data in dataset], dtype=torch.float)
+    mean = ys.mean(dim=0)
+    std  = ys.std(dim=0)
+
+
     train_ratio = 0.8
     split_idx = int(train_ratio*len(dataset))
     train_data = dataset[:split_idx]
@@ -225,25 +255,21 @@ if __name__ == "__main__":
     loss_fn = nn.MSELoss()
 
 
-    train_loader = create_dataloader(train_data, batch_size=32) 
+    train_loader = create_dataloader(train_data, mean, std, batch_size=32) 
 
-
-    for _ in range(cfg["epoch_count"]):
-        loader = train_loader
-        for batch in tqdm(loader):
-            batch = batch.to(device) # 배치 GPU사용 가능하게 만들기
-            pred = model(batch, cfg)
-            loss = loss_fn(pred, batch.y)
-
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
     
-    torch.save(model.state_dict(), 'save/model.pth')
+    fit(model, train_loader, loss_fn, cfg, device)    
+
+
+    torch.save({
+        "model": model.state_dict(),
+        "mean": mean,
+        "std": std
+    }, f"model.pth")
 
 
     model.eval()
-    test_loader = create_dataloader(test_data, batch_size=32)
+    test_loader = create_dataloader(test_data, mean, std, batch_size=32)
 
 
     with torch.no_grad():
