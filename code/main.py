@@ -59,6 +59,8 @@ def create_dataloader(dataset, mean, std ,batch_size, IsShffle=True) -> DataLoad
 
 def data_load_csv(path: str, targets: list[str], slice_size:int) -> list:
     df = pd.read_csv(path)
+    mask = df["smiles"].map(lambda s: Chem.MolFromSmiles(s) is not None)
+    df = df[mask]
     dataset = df[targets].values.tolist()[:slice_size]
     return dataset
 
@@ -112,7 +114,7 @@ def mol_to_graph(smiles: str, y: list, mean: Tensor, std:Tensor) -> Data:
         edge_attr.append(bond_feature)
 
 
-    y: Tensor = (torch.tensor(y, dtype=torch.float) - mean) / std
+    y = (torch.tensor(y, dtype=torch.float) - mean) / std
 
 
     return Data(
@@ -137,9 +139,9 @@ class DMPNN(MessagePassing):
     def forward(self, x: Tensor, edge_index: Tensor,
                  edge_attr: Tensor, cfg: dict):
         
-        h = torch.cat([x[edge_index[0]], edge_attr], dim=1)
-        h = self.W_i(h)
-        h = torch.nn.functional.relu(h)
+        h = torch.cat([x[edge_index[0]], edge_attr], dim=1) # 모든 src의 atomfeature + bondfeature 
+        h = self.W_i(h) # (batch_size만큼의 분자의 결합하는 원자수, hidden_dim)
+        h = torch.relu(h)
 
         for _ in range(cfg["hop_count"]):
             h = self.propagate(edge_index, h=h)
@@ -154,9 +156,9 @@ class DMPNN(MessagePassing):
         return node_emb
     
 
-    def message(self, h):
-        h = self.W_m(h)
-        h = torch.nn.functional.relu(h)
+    def message(self, h_j): # h_j 는 정해진 값임
+        h = self.W_m(h_j)
+        h = torch.relu(h)
         return h
 
 
@@ -171,6 +173,7 @@ class FeedForward(nn.Module):
         nn.Linear(4*in_dim, in_dim),
         )
     
+
     def forward(self, x):
         return self.layers(x)
 
@@ -236,7 +239,7 @@ if __name__ == "__main__":
     ys = torch.tensor([data[1:] for data in dataset], dtype=torch.float)
     mean = ys.mean(dim=0)
     std  = ys.std(dim=0)
-
+    print("std :", std)
 
     train_ratio = 0.8
     split_idx = int(train_ratio*len(dataset))
