@@ -30,7 +30,8 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
 # path
-path = "data/processed_dataset.csv"
+# path = "data/processed_dataset.csv"
+path = "data/processed_dataset_5_property.csv"
 
 
 
@@ -59,7 +60,9 @@ def create_dataloader(dataset, mean, std ,batch_size, IsShffle=True) -> DataLoad
 
 def data_load_csv(path: str, targets: list[str], slice_size:int) -> list:
     df = pd.read_csv(path)
-    mask = df["smiles"].map(lambda s: Chem.MolFromSmiles(s) is not None)
+    key = df.keys()[1] # smile
+    print(f"key 1 is {key}")
+    mask = df[key].map(lambda s: Chem.MolFromSmiles(s) is not None)
     df = df[mask]
     dataset = df[targets].values.tolist()[:slice_size]
     return dataset
@@ -225,20 +228,23 @@ def fit(model, data_loader, loss_fn, cfg, device) -> list:
 
 if __name__ == "__main__":
     target_propertys = [
-        "smiles",
-        "mw",
-        "xlogp",
+        "SMILES",
+        "Molecular_Weight",
+        "XLogP",
+        # "Charge",
+        "Polar_Area"
     ]
     
 
 
-    slice_size = 100000 
+    slice_size = "all" 
     dataset = data_load_csv(path, target_propertys, slice_size)
 
 
     ys = torch.tensor([data[1:] for data in dataset], dtype=torch.float)
     mean = ys.mean(dim=0)
     std  = ys.std(dim=0)
+    std[std < 1e-6] = 1.0
     print("std :", std)
 
     train_ratio = 0.8

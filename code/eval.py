@@ -51,15 +51,18 @@ def mol_to_graph(smiles: str) -> Data:
 
 
 
-model = ChemModel(in_dim=64, out_dim=2)
+model = ChemModel(in_dim=64, out_dim=4)
 
-state_dict = torch.load("Model/model_loss_32939.pth", map_location=device)
-model.load_state_dict(state_dict)
+checkpoint = torch.load("Model/model_loss_94.pth", map_location=device)
+model.load_state_dict(checkpoint["model"])
 
 model = model.to(device)
 model.eval()
 
 cfg = {"hop_count": 3}
+
+mean = checkpoint["mean"]
+std = checkpoint["std"]
 
 # -----------------------
 # 3. 예측 함수
@@ -89,10 +92,12 @@ if __name__ == "__main__":
 
         try:
             pred = predict(smiles)
+            pred = pred * std + mean
 
             # print("예측 결과 → {}".format( for i, p in enumerate(pred[0])))
 
-            print(f"예측 결과 → MW: {pred[0, 0]:.2f}, XlogP: {pred[0, 1]:.2f}")
+            # print(f"예측 결과 → MW: {pred[0, 0]:.2f}, XlogP: {pred[0, 1]:.2f}")
+            print(pred)
 
         except Exception as e:
             print("에러:", e)
