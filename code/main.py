@@ -22,7 +22,9 @@ from tqdm.auto import tqdm
 # setting a hyperparameter
 cfg = {
     "hop_count": 3,
-    "epoch_count": 20
+    "epoch_count": 20,
+    "data_path": "data/processed_dataset_5_property.csv",
+    "save_path": "model_loss_000.pth"
 }
 
 # gpu setting
@@ -31,7 +33,7 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # path
 # path = "data/processed_dataset.csv"
-path = "data/processed_dataset_5_property.csv"
+path = cfg["data_path"]
 
 
 
@@ -60,11 +62,24 @@ def create_dataloader(dataset, mean, std ,batch_size, IsShffle=True) -> DataLoad
 
 def data_load_csv(path: str, targets: list[str], slice_size:int) -> list:
     df = pd.read_csv(path)
-    key = df.keys()[1] # smile
-    print(f"key 1 is {key}")
+    smiles = ["smile", "SMILE", "smiles", "SMILES"]
+
+
+    if any(smile in df.keys().tolist() for smile in smiles):
+        key = df.keys()[1] if df.keys()[1] in smiles else df.keys()[0]
+    else:
+        raise "smile를 포함하고있지 않은 데이터 셋이거나, smile의 컬럼명이 smile, smiles, SMILE, SMILES가 아닙니다."
+    print(f"smiles colmun name : {key}")
+
+
     mask = df[key].map(lambda s: Chem.MolFromSmiles(s) is not None)
     df = df[mask]
-    dataset = df[targets].values.tolist()[:slice_size]
+
+
+    if slice_size in [None, "all"]:
+        dataset = df[targets].values.tolist()
+    else:
+        dataset = df[targets].values.tolist()[:slice_size]
     return dataset
 
 
@@ -214,8 +229,8 @@ class ChemModel(nn.Module):
 
 def fit(model, data_loader, loss_fn, cfg, device) -> list:
     train_loss = []
-    for _ in range(cfg["epoch_count"]):
-        for batch in tqdm(data_loader):
+    for i in range(cfg["epoch_count"]):
+        for batch in tqdm(data_loader, desc=f"{i} 번째 epoch "):
             batch = batch.to(device) # 배치 GPU사용 가능하게 만들기
             pred = model(batch, cfg)
             loss = loss_fn(pred, batch.y)
@@ -224,6 +239,7 @@ def fit(model, data_loader, loss_fn, cfg, device) -> list:
             optimizer.step()
         train_loss.append(loss)
     return train_loss
+
 
 
 if __name__ == "__main__":
@@ -236,8 +252,7 @@ if __name__ == "__main__":
     ]
     
 
-
-    slice_size = "all" 
+    slice_size = "all"
     dataset = data_load_csv(path, target_propertys, slice_size)
 
 
@@ -274,7 +289,7 @@ if __name__ == "__main__":
         "model": model.state_dict(),
         "mean": mean,
         "std": std
-    }, f"model.pth")
+    }, cfg["save_path"])
 
 
     model.eval()

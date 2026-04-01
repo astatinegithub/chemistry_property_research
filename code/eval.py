@@ -51,9 +51,9 @@ def mol_to_graph(smiles: str) -> Data:
 
 
 
-model = ChemModel(in_dim=64, out_dim=4)
+model = ChemModel(in_dim=64, out_dim=3)
 
-checkpoint = torch.load("Model/model_loss_94.pth", map_location=device)
+checkpoint = torch.load("Model/model_loss_1092.pth", map_location=device)
 model.load_state_dict(checkpoint["model"])
 
 model = model.to(device)
