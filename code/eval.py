@@ -51,15 +51,15 @@ def mol_to_graph(smiles: str) -> Data:
 
 
 
-model = ChemModel(in_dim=64, out_dim=3)
+model = ChemModel(in_dim=256, out_dim=3)
 
-checkpoint = torch.load("Model/model_loss_1092.pth", map_location=device)
+checkpoint = torch.load("Model/model_loss_947.pth", map_location=device)
 model.load_state_dict(checkpoint["model"])
 
 model = model.to(device)
 model.eval()
 
-cfg = {"hop_count": 3}
+cfg = {"depth": 3}
 
 mean = checkpoint["mean"]
 std = checkpoint["std"]
@@ -79,6 +79,9 @@ def predict(smiles: str):
         pred = model(data, cfg)
 
     return pred
+
+
+torch.set_printoptions(sci_mode=False)
 
 # -----------------------
 # 4. 실행

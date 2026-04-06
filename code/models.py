@@ -22,8 +22,8 @@ class DMPNN(MessagePassing):
         h = self.W_i(h) # (batch_size만큼의 분자의 결합하는 원자수, hidden_dim)
         h = torch.relu(h)
 
-        for _ in range(cfg["hop_count"]):
-            h = self.propagate(edge_index, h=h)
+        for _ in range(cfg["depth"]):
+            h = h + self.propagate(edge_index, h=h)
 
         node_emb = torch.zeros(x.size(0), h.size(1), device=x.device)
         node_emb.index_add_(0, edge_index[1], h)

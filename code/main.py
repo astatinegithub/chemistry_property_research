@@ -19,7 +19,7 @@ from models import ChemModel
 
 # setting a hyperparameter
 cfg = {
-    "hop_count": 3,
+    "depth": 3,
     "epoch_count": 20,
     "data_path": "data/processed_dataset_5_property.csv",
     "save_path": "model_loss_000.pth"
@@ -93,7 +93,7 @@ def data_load_json(path: str, targets: list[str]) -> list:
     return df
 
 
-def mol_to_graph(smiles: str, y: list, mean: Tensor, std:Tensor) -> Data:
+def mol_to_graph(smiles: str, y: list, mean: Tensor, std: Tensor) -> Data:
     mol = Chem.MolFromSmiles(smiles)
 
     node_feature = []
@@ -139,16 +139,10 @@ def mol_to_graph(smiles: str, y: list, mean: Tensor, std:Tensor) -> Data:
     )
 
 
-
-
-    
-
-
-
 def fit(model, data_loader, loss_fn, cfg, device) -> list:
     train_loss = []
     for i in range(cfg["epoch_count"]):
-        for batch in tqdm(data_loader, desc=f"{i} 번째 epoch "):
+        for batch in tqdm(data_loader, desc=f"{i+1} 번째 epoch "):
             batch = batch.to(device) # 배치 GPU사용 가능하게 만들기
             pred = model(batch, cfg)
             loss = loss_fn(pred, batch.y)
@@ -187,7 +181,7 @@ if __name__ == "__main__":
 
 
     model = ChemModel(
-        in_dim=64,
+        in_dim=256,
         out_dim=len(target_propertys)-1 
     )
     model = model.to(device)
