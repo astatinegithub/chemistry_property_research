@@ -68,8 +68,8 @@ def data_load_csv(path: str, targets: list[str], slice_size:int) -> list:
     print(f"smiles colmun name : {key}")
 
 
-    mask = df[key].map(lambda s: Chem.MolFromSmiles(s) is not None)
-    df = df[mask]
+    # mask = df[key].map(lambda s: Chem.MolFromSmiles(s) is not None)
+    # df = df[mask]
 
 
     if slice_size in [None, "all"]:
@@ -91,6 +91,19 @@ def data_load_json(path: str, targets: list[str]) -> list:
     df = df[target_propertys].values.tolist()
 
     return df
+
+
+def build_reverse_edge_index(edge_index: list) -> list:
+
+    edge_dict = {}
+    for i, (s, d) in enumerate(edge_index):
+        edge_dict[(s, d)] = i
+
+    rev_edge = []
+    for s, d in edge_index:
+        rev_edge.append(edge_dict[(d, s)])
+
+    return rev_edge
 
 
 def mol_to_graph(smiles: str, y: list, mean: Tensor, std: Tensor) -> Data:
@@ -130,16 +143,19 @@ def mol_to_graph(smiles: str, y: list, mean: Tensor, std: Tensor) -> Data:
 
     y = (torch.tensor(y, dtype=torch.float) - mean) / std
 
+    rev_edge = build_reverse_edge_index(edge_index)
+
 
     return Data(
         x=torch.tensor(node_feature, dtype=torch.float),
         edge_index=torch.tensor(edge_index, dtype=torch.long).t().contiguous(),
         edge_attr=torch.tensor(edge_attr, dtype=torch.float),
+        rev_edge=torch.tensor(rev_edge, dtype=torch.long),
         y=y.view(1, -1),
     )
 
 
-def fit(model, data_loader, loss_fn, cfg, device) -> list:
+def fit(model, data_loader, optimizer, loss_fn, cfg, device) -> list:
     train_loss = []
     for i in range(cfg["epoch_count"]):
         for batch in tqdm(data_loader, desc=f"{i+1} 번째 epoch "):
@@ -149,12 +165,13 @@ def fit(model, data_loader, loss_fn, cfg, device) -> list:
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
-        train_loss.append(loss)
+        train_loss.append(loss.item())
     return train_loss
 
 
 
 if __name__ == "__main__":
+
     target_propertys = [
         "SMILES",
         "Molecular_Weight",
@@ -164,7 +181,7 @@ if __name__ == "__main__":
     ]
     
 
-    slice_size = "all"
+    slice_size = 1000
     dataset = data_load_csv(path, target_propertys, slice_size)
 
 
@@ -185,6 +202,7 @@ if __name__ == "__main__":
         out_dim=len(target_propertys)-1 
     )
     model = model.to(device)
+    model.train()
 
 
     optimizer = optim.Adam(model.parameters(), lr=1e-3)
@@ -194,7 +212,7 @@ if __name__ == "__main__":
     train_loader = create_dataloader(train_data, mean, std, batch_size=32) 
 
     
-    fit(model, train_loader, loss_fn, cfg, device)    
+    fit(model, train_loader, optimizer, loss_fn, cfg, device)    
 
 
     torch.save({

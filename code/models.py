@@ -5,6 +5,7 @@ from torch_geometric.nn import MessagePassing, global_add_pool
 from torch_geometric.data import Data
 
 
+
 class DMPNN(MessagePassing):
     def __init__(self, atom_dim, bond_dim, hidden_dim,
                  W_bias=False):
@@ -16,14 +17,22 @@ class DMPNN(MessagePassing):
 
 
     def forward(self, x: Tensor, edge_index: Tensor,
-                 edge_attr: Tensor, cfg: dict):
-        
-        h = torch.cat([x[edge_index[0]], edge_attr], dim=1) # 모든 src의 atomfeature + bondfeature 
-        h = self.W_i(h) # (batch_size만큼의 분자의 결합하는 원자수, hidden_dim)
-        h = torch.relu(h)
+                 edge_attr: Tensor, rev_edge: Tensor, cfg: dict):
+        h0 = torch.cat([x[edge_index[0]], edge_attr], dim=1) # 모든 src의 atomfeature + bondfeature 
+        h0 = self.W_i(h0) # (batch_size만큼의 분자의 결합하는 원자수, hidden_dim)
+        h0 = torch.relu(h0)
+        h = h0.clone()
 
         for _ in range(cfg["depth"]):
-            h = h + self.propagate(edge_index, h=h)
+            m = torch.relu(self.W_m(h))
+
+            node_m = torch.zeros(x.size(0), m.size(1), device=x.device)
+            node_m.index_add_(0, edge_index[1], m)
+            
+            m_edge = node_m[edge_index[0]]
+            m_edge = m_edge - m[rev_edge]
+            h = h0 + m_edge
+            # h = h + self.propagate(edge_index, h=h, rev_edge=rev_edge)
 
         node_emb = torch.zeros(x.size(0), h.size(1), device=x.device)
         node_emb.index_add_(0, edge_index[1], h)
@@ -39,6 +48,18 @@ class DMPNN(MessagePassing):
         h = self.W_m(h_j)
         h = torch.relu(h)
         return h
+    
+
+    def update(self, aggr_out, h, rev_edge):
+        # aggr_out: sum of incoming messages
+        # h: current edge hidden state
+
+        reverse_h = h[rev_edge]
+
+        # 🔥 핵심: reverse 제거
+        new_h = aggr_out - reverse_h
+
+        return new_h
 
 
 
@@ -76,9 +97,10 @@ class ChemModel(nn.Module):
         x = data.x
         edge_index = data.edge_index
         edge_attr = data.edge_attr
+        rev_edge = data.rev_edge
         batch = data.batch
 
-        h = self.gnn(x, edge_index, edge_attr, cfg)
+        h = self.gnn(x, edge_index, edge_attr, rev_edge, cfg)
         h = global_add_pool(h, batch)
         h = self.ffn(h)
         h = self.last_layer(h)
