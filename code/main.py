@@ -3,18 +3,19 @@ from torch import Tensor
 import torch.nn as nn
 from torch_geometric.data import Data
 import torch.optim as optim
-
-import pandas as pd
-import json
 from torch.utils.data import DataLoader
 from torch_geometric.data import InMemoryDataset
 from torch_geometric.loader import DataLoader
 
 
+import pandas as pd
+import json
+import time
 from rdkit import Chem
 from tqdm.auto import tqdm
-from models import ChemModel
 
+
+from models import ChemModel
 
 
 # setting a hyperparameter
@@ -22,7 +23,8 @@ cfg = {
     "depth": 3,
     "epoch_count": 20,
     "data_path": "data/processed_dataset_5_property.csv",
-    "save_path": "model_loss_000.pth"
+    "save_path": "Model/", # "model_loss_000.pth"
+    "in_dim": 256
 }
 
 # gpu setting
@@ -54,6 +56,7 @@ def create_dataloader(dataset, mean, std ,batch_size, IsShffle=True) -> DataLoad
         shuffle=IsShffle
     )
     return data_loader
+
 
 
 def data_load_csv(path: str, targets: list[str], slice_size:int) -> list:
@@ -93,6 +96,7 @@ def data_load_json(path: str, targets: list[str]) -> list:
     return df
 
 
+
 def build_reverse_edge_index(edge_index: list) -> list:
 
     edge_dict = {}
@@ -104,6 +108,7 @@ def build_reverse_edge_index(edge_index: list) -> list:
         rev_edge.append(edge_dict[(d, s)])
 
     return rev_edge
+
 
 
 def mol_to_graph(smiles: str, y: list, mean: Tensor, std: Tensor) -> Data:
@@ -142,7 +147,6 @@ def mol_to_graph(smiles: str, y: list, mean: Tensor, std: Tensor) -> Data:
 
 
     y = (torch.tensor(y, dtype=torch.float) - mean) / std
-
     rev_edge = build_reverse_edge_index(edge_index)
 
 
@@ -155,8 +159,9 @@ def mol_to_graph(smiles: str, y: list, mean: Tensor, std: Tensor) -> Data:
     )
 
 
+
 def fit(model, data_loader, optimizer, loss_fn, cfg, device) -> list:
-    train_loss = []
+    # train_loss = []
     for i in range(cfg["epoch_count"]):
         for batch in tqdm(data_loader, desc=f"{i+1} 번째 epoch "):
             batch = batch.to(device) # 배치 GPU사용 가능하게 만들기
@@ -165,8 +170,17 @@ def fit(model, data_loader, optimizer, loss_fn, cfg, device) -> list:
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
-        train_loss.append(loss.item())
-    return train_loss
+        # 코랩 런타임 끊어짐 방지용
+        torch.save({
+            "model": model.state_dict(),
+            "mean": mean,
+            "std": std,
+            "in_dim": cfg["in_dim"]
+        }, cfg["save_path"] + f"{time.strftime('%x_%X')}.pth")
+
+
+        # train_loss.append(loss.item())
+    # return train_loss
 
 
 
@@ -191,6 +205,10 @@ if __name__ == "__main__":
     std[std < 1e-6] = 1.0
     print("std :", std)
 
+    cfg["mean"] = mean
+    cfg["std"] = std
+
+
     train_ratio = 0.8
     split_idx = int(train_ratio*len(dataset))
     train_data = dataset[:split_idx]
@@ -198,7 +216,7 @@ if __name__ == "__main__":
 
 
     model = ChemModel(
-        in_dim=256,
+        in_dim=cfg["in_dim"],
         out_dim=len(target_propertys)-1 
     )
     model = model.to(device)
@@ -218,7 +236,8 @@ if __name__ == "__main__":
     torch.save({
         "model": model.state_dict(),
         "mean": mean,
-        "std": std
+        "std": std,
+        "in_dim": cfg["in_dim"]
     }, cfg["save_path"])
 
 
