@@ -22,7 +22,7 @@ from models import ChemModel
 # setting a hyperparameter
 cfg = {
     "depth": 3,
-    "epoch_count": 20,
+    "epoch_count": 35,
     "data_path": "data/processed_dataset_5_property.csv",
     "save_path": "Model/", # "model_loss_000.pth"
     "in_dim": 256
@@ -43,13 +43,13 @@ class MoleculeDataset(InMemoryDataset):
 
 
 
-def create_dataloader(dataset, mean, std ,batch_size, IsShffle=True) -> DataLoader:
+def create_dataloader(dataset, mean, std ,batch_size, device, IsShffle=True) -> DataLoader:
     dataset = [
-        mol_to_graph(data[0], list(data[1:]), mean, std) 
-        for data in dataset
+        mol_to_graph(data[0], list(data[1:]), mean, std, device) 
+        for data in tqdm(dataset, desc="loading")
     ]
-
     dataset = MoleculeDataset(dataset)
+
 
     data_loader = DataLoader(
         dataset=dataset,
@@ -73,7 +73,7 @@ def data_load_csv(path: str, targets: list[str], slice_size:int) -> list:
 
 
     # mask = df[key].map(lambda s: Chem.MolFromSmiles(s) is not None)
-    # df = df[mask]
+    # df = df[mask] # 전처리를 이미 했기에 안해도 ㄱㅊ
 
 
     if slice_size in [None, "all"]:
@@ -112,7 +112,7 @@ def build_reverse_edge_index(edge_index: list) -> list:
 
 
 
-def mol_to_graph(smiles: str, y: list, mean: Tensor, std: Tensor) -> Data:
+def mol_to_graph(smiles: str, y: list, mean: Tensor, std: Tensor, device) -> Data:
     mol = Chem.MolFromSmiles(smiles)
 
     node_feature = []
@@ -149,7 +149,7 @@ def mol_to_graph(smiles: str, y: list, mean: Tensor, std: Tensor) -> Data:
         edge_attr.append(bond_feature)
 
 
-    y = (torch.tensor(y, dtype=torch.float) - mean) / std
+    y = (torch.tensor(y, dtype=torch.float, device=device) - mean) / std
     rev_edge = build_reverse_edge_index(edge_index)
 
 
@@ -186,19 +186,30 @@ def fit(model, data_loader, optimizer, loss_fn, cfg, device) -> list:
     # return train_loss
 
 
-def train_weight_load(target_dir: str, device):
+def train_weight_load(dataset, target_dir: str, model, 
+                      optimizer, device):
     files = os.listdir(target_dir)
     if len(files) == 0:
-        return None
+        ys = torch.tensor([data[1:] for data in dataset], dtype=torch.float, device=device)
+        mean = ys.mean(dim=0)
+        std  = ys.std(dim=0)
+        std[std < 1e-6] = 1.0
+        print("std :", std)
+        return None, mean, std
     else:
         files = [f for f in files if f.endswith(".pth")]
         target_file = sorted(files)[-1]
         checkpoint = torch.load(target_dir+'/'+target_file, map_location=device) 
-        
-        return checkpoint
+        model.load_state_dict(checkpoint["model"])
+        optimizer.load_state_dict(checkpoint["optimizer"])
+        mean = checkpoint["mean"]
+        std = checkpoint["std"]
+        return checkpoint, mean, std
 
 
-# def init_data_target_make():
+
+# def init_data_target_make(dataset):
+    
 
 
 
@@ -231,18 +242,18 @@ if __name__ == "__main__":
     loss_fn = nn.MSELoss()
 
     # 재학습시
-    checkpoint = train_weight_load(cfg["save_path"], device=device)
-    model.load_state_dict(checkpoint["model"])
-    optimizer.load_state_dict(checkpoint["optimizer"])
-    mean = checkpoint["mean"]
-    std = checkpoint["std"]
+    checkpoint, mean, std = train_weight_load(dataset, cfg["save_path"], model, optimizer, device=device)
+    # model.load_state_dict(checkpoint["model"])
+    # optimizer.load_state_dict(checkpoint["optimizer"])
+    # mean = checkpoint["mean"]
+    # std = checkpoint["std"]
 
     # 아래 주석처리하고 재학습
-    ys = torch.tensor([data[1:] for data in dataset], dtype=torch.float)
-    mean = ys.mean(dim=0)
-    std  = ys.std(dim=0)
-    std[std < 1e-6] = 1.0
-    print("std :", std)
+    # ys = torch.tensor([data[1:] for data in dataset], dtype=torch.float)
+    # mean = ys.mean(dim=0)
+    # std  = ys.std(dim=0)
+    # std[std < 1e-6] = 1.0
+    # print("std :", std)
 
     cfg["mean"] = mean
     cfg["std"] = std
@@ -251,7 +262,7 @@ if __name__ == "__main__":
     model.train()  
 
 
-    train_loader = create_dataloader(train_data, mean, std, batch_size=32)     
+    train_loader = create_dataloader(train_data, mean, std, batch_size=32, device=device)     
     fit(model, train_loader, optimizer, loss_fn, cfg, device)    
 
 

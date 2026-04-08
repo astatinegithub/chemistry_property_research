@@ -55,8 +55,6 @@ class DMPNN(MessagePassing):
         # h: current edge hidden state
 
         reverse_h = h[rev_edge]
-
-        # 🔥 핵심: reverse 제거
         new_h = aggr_out - reverse_h
 
         return new_h
@@ -72,7 +70,7 @@ class FeedForward(nn.Module):
         nn.Dropout(drop_rate),
         nn.Linear(4*in_dim, in_dim),
         )
-    
+
 
     def forward(self, x):
         return self.layers(x)
