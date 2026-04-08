@@ -83,7 +83,7 @@ class ChemModel(nn.Module):
     def __init__(self, in_dim, out_dim, drop_rate=0.2):
         super().__init__()
         self.gnn = DMPNN(
-            atom_dim=4,
+            atom_dim=6, # 방금 특성 넣어줌 나중에 수정해야 할듯 
             bond_dim=3,
             hidden_dim=in_dim
         )

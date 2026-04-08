@@ -2,7 +2,8 @@ import torch
 from rdkit import Chem
 from torch_geometric.data import Data
 
-from main import ChemModel
+from main import cfg, build_reverse_edge_index
+from models import ChemModel
 
 # -----------------------
 # 1. 디바이스 설정
@@ -41,19 +42,23 @@ def mol_to_graph(smiles: str) -> Data:
         edge_index.append([j, i])
         edge_attr.append(bond_feature)
         edge_attr.append(bond_feature)
-
+    rev_edge = build_reverse_edge_index(edge_index)
 
     return Data(
         x=torch.tensor(node_feature, dtype=torch.float),
         edge_index=torch.tensor(edge_index, dtype=torch.long).t().contiguous(),
-        edge_attr=torch.tensor(edge_attr, dtype=torch.float)
+        edge_attr=torch.tensor(edge_attr, dtype=torch.float),
+        rev_edge=torch.tensor(rev_edge, dtype=torch.long)
     )
 
 
 
-model = ChemModel(in_dim=64, out_dim=3)
+model = ChemModel(
+    in_dim=cfg["in_dim"], 
+    out_dim=3
+    )
 
-checkpoint = torch.load("Model/model_loss_947.pth", map_location=device)
+checkpoint = torch.load("Model/2026-04-08_04-06-08_epoch43.pth", map_location=device)
 model.load_state_dict(checkpoint["model"])
 
 model = model.to(device)
