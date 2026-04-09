@@ -22,6 +22,8 @@ def mol_to_graph(smiles: str) -> Data:
     atom.GetAtomicNum(),
     atom.GetDegree(),
     atom.GetFormalCharge(),
+    atom.GetTotalNumHs(), # 생략된 붙어있는 H의 수
+    atom.GetMass(), # 원자 질량
     int(atom.GetIsAromatic())
         ]
           for atom in mol.GetAtoms()]
@@ -51,14 +53,14 @@ def mol_to_graph(smiles: str) -> Data:
         rev_edge=torch.tensor(rev_edge, dtype=torch.long)
     )
 
-
+torch.manual_seed(42)
 
 model = ChemModel(
     in_dim=cfg["in_dim"], 
     out_dim=3
     )
 
-checkpoint = torch.load("Model/2026-04-08_04-06-08_epoch43.pth", map_location=device)
+checkpoint = torch.load("um/2026-04-08_09-26-26_epoch35.pth", map_location=device)
 model.load_state_dict(checkpoint["model"])
 
 model = model.to(device)

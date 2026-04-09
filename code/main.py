@@ -166,19 +166,25 @@ def mol_to_graph(smiles: str, y: list, mean: Tensor, std: Tensor, device) -> Dat
 def fit(model, data_loader, optimizer, loss_fn, cfg, device) -> list:
     # train_loss = []
     for i in range(cfg["epoch_count"]):
+        epoch_loss = []
         for batch in tqdm(data_loader, desc=f"{i+1} 번째 epoch "):
             batch = batch.to(device) # 배치 GPU사용 가능하게 만들기
             pred = model(batch, cfg)
+
             loss = loss_fn(pred, batch.y)
+            epoch_loss.append(loss)
+
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
+        print(f"{i+1}epoch : loss {sum(epoch_loss)}")
         # 코랩 런타임 끊어짐 방지용
         torch.save({
             "model": model.state_dict(),
             "mean": mean,
             "std": std,
-            "in_dim": cfg["in_dim"]
+            "in_dim": cfg["in_dim"],
+            "optimizer": optimizer.state_dict(),
         }, cfg["save_path"] + f"{time.strftime('%Y-%m-%d_%H-%M-%S')}_epoch{i+1}.pth")
 
 
@@ -214,6 +220,7 @@ def train_weight_load(dataset, target_dir: str, model,
 
 
 if __name__ == "__main__":
+    torch.manual_seed(42)
 
     target_propertys = [
         "SMILES",
@@ -243,17 +250,6 @@ if __name__ == "__main__":
 
     # 재학습시
     checkpoint, mean, std = train_weight_load(dataset, cfg["save_path"], model, optimizer, device=device)
-    # model.load_state_dict(checkpoint["model"])
-    # optimizer.load_state_dict(checkpoint["optimizer"])
-    # mean = checkpoint["mean"]
-    # std = checkpoint["std"]
-
-    # 아래 주석처리하고 재학습
-    # ys = torch.tensor([data[1:] for data in dataset], dtype=torch.float)
-    # mean = ys.mean(dim=0)
-    # std  = ys.std(dim=0)
-    # std[std < 1e-6] = 1.0
-    # print("std :", std)
 
     cfg["mean"] = mean
     cfg["std"] = std
