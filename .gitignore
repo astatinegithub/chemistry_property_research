@@ -1,8 +1,9 @@
 # python virtual environment
-/chem
+chem/
 
 # it's too big (maybe?) 
-/data
+data/
 
-/Model
-/um
+# other setup
+*.egg-info
+setup.py

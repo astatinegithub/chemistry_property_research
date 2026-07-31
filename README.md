@@ -4,3 +4,11 @@
 
 
 # dataset
+- 
+
+# piplist
+- setuptools
+- pytorch
+- torchvision
+- pandas
+- rdkit
