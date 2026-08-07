@@ -4,7 +4,7 @@ from tqdm import tqdm
 import torch
 
 from isonet.config import ROOT
-from isonet.data.dataset import MolGraph
+from isonet.data.dataset import MolGraph, mol2feature
 
 
 RDLogger.DisableLog("rdApp.*")
@@ -34,11 +34,11 @@ def preprocess_sdf(input_path, output_path):
             removed += 1
             continue
 
-        if i == 100000:
+        if i == 250000:
             break
 
         
-        graph = MolGraph(mol)
+        graph = MolGraph(*mol2feature(mol))
         graphs.append(graph)
 
 
@@ -53,7 +53,7 @@ def preprocess_sdf(input_path, output_path):
 
 if __name__ == "__main__":
     input_path = ROOT + "dataset/test_dataset/Compound_000000001_000500000.sdf"
-    output_path = ROOT + "dataset/processed_data/train_graph.pt"
+    output_path = ROOT + "dataset/processed_data/train_graph2.pt"
 
     preprocess_sdf(input_path, output_path)
 

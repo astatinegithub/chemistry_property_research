@@ -15,51 +15,47 @@ from torch_geometric.data import Data, Dataset
 from isonet.utils.path import str2path
 from isonet.config import ROOT
 
+ATOM_TYPES = {
+    1:0,    # H
+    6:1,    # C
+    7:2,    # N
+    8:3,    # O
+    9:4,    # F
+    15:5,   # P
+    16:6,   # S
+    17:7,   # Cl
+    35:8,   # Br
+    53:9    # I
+}
+BOND_TYPES = {
+    1.0:0,
+    2.0:1,
+    3.0:2,
+    1.5:3
+}
 
 
-class MolGraph(Data):
-    ATOM_TYPES = {
-            1:0,    # H
-            6:1,    # C
-            7:2,    # N
-            8:3,    # O
-            9:4,    # F
-            15:5,   # P
-            16:6,   # S
-            17:7,   # Cl
-            35:8,   # Br
-            53:9    # I
-        }
-    BOND_TYPES = {
-            1.0:0,
-            2.0:1,
-            3.0:2,
-            1.5:3
-        }
-    def __init__(self, mol, y=None):
-        super().__init__()
+def one_hot(value, mapping):
+    idx = mapping.get(value, len(mapping))
+    return F.one_hot(
+        torch.tensor(idx),
+        num_classes=len(mapping)+1   # +1 = unknown
+    ).float()
 
 
-        # basic variables
-        x, edge_index, edge_attr, rev_edge = self.mol2feature(mol)
+def build_reverse_edge_index(edge_index: list) -> list:
+    edge_dict = {}
+    for i, (s, d) in enumerate(edge_index):
+        edge_dict[(s, d)] = i
 
-        self.x = x
-        self.edge_index = edge_index
-        self.edge_attr = edge_attr
-        self.rev_edge = rev_edge
-        self.y = y
+    rev_edge = []
+    for s, d in edge_index:
+        rev_edge.append(edge_dict[(d, s)])
 
-
-        # for pretrain variables
-        self.mask_idx = None
-        self.atom_target = None
-
-        self.atom_type = torch.tensor(
-            [self.ATOM_TYPES[atom.GetAtomicNum()] for atom in mol.GetAtoms()]
-        )
+    return rev_edge
 
 
-    def mol2feature(self, mol: Chem.Mol) -> Data:
+def mol2feature(mol: Chem.Mol) -> Data:
         node_feature = []
         edge_attr    = []
         edge_index   = []
@@ -67,7 +63,7 @@ class MolGraph(Data):
         
         node_feature = [
             torch.cat([
-                self.one_hot(atom.GetAtomicNum(), self.ATOM_TYPES), # 원소
+                one_hot(atom.GetAtomicNum(), ATOM_TYPES), # 원소
                 F.one_hot(
                     torch.tensor(atom.GetDegree()),
                     num_classes=7
@@ -95,9 +91,9 @@ class MolGraph(Data):
             j = bond.GetEndAtomIdx()
 
             bond_feature = torch.cat([
-                self.one_hot(
+                one_hot(
                     bond.GetBondTypeAsDouble(),
-                    self.BOND_TYPES
+                    BOND_TYPES
                 ),
                 torch.tensor([
                     int(bond.GetIsConjugated()),
@@ -110,44 +106,48 @@ class MolGraph(Data):
             edge_attr.append(bond_feature)
             edge_attr.append(bond_feature)
 
-        rev_edge = self.build_reverse_edge_index(edge_index)
+        rev_edge = build_reverse_edge_index(edge_index)
+
+        atom_type = torch.tensor(
+            [ATOM_TYPES[atom.GetAtomicNum()] for atom in mol.GetAtoms()]
+        )
 
 
         x = torch.stack(node_feature).to(torch.float)
         edge_index = torch.tensor(edge_index, dtype=torch.long).t().contiguous()
         edge_attr = torch.stack(edge_attr).float()
         rev_edge = torch.tensor(rev_edge, dtype=torch.long)
+        
 
-        return x, edge_index, edge_attr, rev_edge
-
-
-    @staticmethod
-    def one_hot(value, mapping):
-        idx = mapping.get(value, len(mapping))
-        return F.one_hot(
-            torch.tensor(idx),
-            num_classes=len(mapping)+1   # +1 = unknown
-        ).float()
+        return x, edge_index, edge_attr, rev_edge, atom_type
 
 
-    @staticmethod
-    def build_reverse_edge_index(edge_index: list) -> list:
-        edge_dict = {}
-        for i, (s, d) in enumerate(edge_index):
-            edge_dict[(s, d)] = i
 
-        rev_edge = []
-        for s, d in edge_index:
-            rev_edge.append(edge_dict[(d, s)])
+class MolGraph(Data):
+    def __init__(self, x=None, edge_index=None,
+                edge_attr=None, rev_edge=None,
+                atom_type=None, y=None):
+        super().__init__(
+            x=x,
+            edge_index=edge_index,
+            edge_attr=edge_attr,
+            rev_edge=rev_edge,
+            atom_type=atom_type,
+            y=y
+        )
 
-        return rev_edge
+        # for pretrain variables
+        self.mask_idx = None
+        self.atom_target = None
 
 
     def __inc__(self, key, value, *args, **kwargs): # rev_edge는 커스텀이라 batch계산을 위해 필요함
         if key == "rev_edge":
             return self.edge_attr.size(0) # bond 수
         if key == "mask_idx":
-                    return self.x.size(0) # atom 수
+            return self.x.size(0) # atom 수
+        if key == "atom_target":  # 변하면 안되기에 
+            return 0
         return super().__inc__(key, value, *args, **kwargs)
 
 
@@ -244,7 +244,7 @@ if __name__ == "__main__":
     # )
 
     mol = next(smiles)
-    data = MolGraph(mol)
+    data = MolGraph(*mol2feature(mol))
     print(data.x.shape)
     print(data.edge_index.shape)
     print(data.edge_attr.shape)

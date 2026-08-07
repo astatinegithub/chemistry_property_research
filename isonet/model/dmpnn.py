@@ -170,13 +170,14 @@ class ADMETHead(nn.Module):
 
 
 class SSLModel(nn.Module):
-    def __init__(self, atom_dim, bond_dim, hidden_dim, num_atom_types):
+    def __init__(self, atom_dim, bond_dim, hidden_dim, num_atom_types, depth):
         super().__init__()
 
         self.encoder = DMPNN(
             atom_dim,
             bond_dim,
-            hidden_dim
+            hidden_dim,
+            depth
         )
 
         self.head = nn.Linear(
@@ -185,14 +186,8 @@ class SSLModel(nn.Module):
         )
 
 
-    def forward(self, data, depth):
-        h = self.encoder(
-            data.x,
-            data.edge_index,
-            data.edge_attr,
-            data.rev_edge,
-            depth
-        )
+    def forward(self, data: MolGraph):
+        h = self.encoder(data)
 
         # mask된 atom만 예측
         h_mask = h[data.mask_idx]

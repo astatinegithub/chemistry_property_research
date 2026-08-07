@@ -15,10 +15,9 @@ from isonet.config import ROOT
 from isonet.model.dmpnn import *
 from isonet.data.dataset import SSLDataset 
 
-import isonet
-print(isonet.__file__)
+torch.manual_seed(25)
 
-graph_path = ROOT + "data/preprocessed/train_graph.pt"
+graph_path = ROOT + "dataset/processed_data/train_graph1.pt"
 
 
 batch_size = 64
@@ -26,8 +25,7 @@ epochs = 10
 lr = 1e-3
 
 # dataset
-graphs = torch.load(graph_path,weights_only=False)
-
+graphs = torch.load(graph_path, weights_only=False)
 
 dataset = SSLDataset(
     graphs,
@@ -46,7 +44,8 @@ model = SSLModel(
     atom_dim=36,      # 현재 x feature 차원
     bond_dim=7,       # bond feature 차원
     hidden_dim=256,
-    num_atom_types=11 # unknown 포함
+    num_atom_types=10,# unknown 미포함
+    depth=5
 ).to(device)
 
 optimizer = torch.optim.AdamW(
@@ -63,7 +62,8 @@ for epoch in range(epochs):
         batch = batch.to(device)
         target = batch.atom_target
 
-        pred = model(batch, depth=5)
+        pred = model(batch)
+        
         loss = criterion(pred, target)
         optimizer.zero_grad()
         loss.backward()
@@ -71,7 +71,7 @@ for epoch in range(epochs):
 
         total_loss += loss.item()
 
-    print(f"Epoch {epoch+1}",total_loss / len(train_loader))
+    print(f"Epoch {epoch+1} | loss {total_loss/ len(train_loader)}", )
     torch.save(
         {
             "encoder": model.encoder.state_dict(),
