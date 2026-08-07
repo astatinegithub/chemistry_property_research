@@ -2,8 +2,9 @@
 chem/
 
 # it's too big (maybe?) 
-data/
+dataset/
 
 # other setup
 *.egg-info
 setup.py
+config.py

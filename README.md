@@ -8,7 +8,8 @@
 
 # piplist
 - setuptools
-- pytorch
+- torch
+- torch_geometric
 - torchvision
 - pandas
 - rdkit
