@@ -4,6 +4,8 @@ chem/
 # it's too big (maybe?) 
 dataset/
 
+checkpoint/
+
 # other setup
 *.egg-info
 setup.py

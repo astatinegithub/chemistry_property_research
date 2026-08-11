@@ -4,7 +4,7 @@
 
 
 # dataset
-- 
+- [PubChem api](https://ftp.ncbi.nlm.nih.gov/pubchem/Compound/CURRENT-Full/SDF/)
 
 # piplist
 - setuptools
