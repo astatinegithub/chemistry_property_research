@@ -1,2 +1,7 @@
-from isonet.model.dmpnn import *
-from isonet.model.pretrain_models import *
+from isonet.model.dmpnn import (
+    DMPNN,
+    SSLModel,
+    IsonetModel
+)
+
+from isonet.model.train.pretrain_models import *

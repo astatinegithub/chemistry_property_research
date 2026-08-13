@@ -82,7 +82,7 @@ def mol2feature(mol: Chem.Mol) -> Data:
                 ], dtype=torch.float)
             ])
             for atom in mol.GetAtoms()
-        ]
+        ]   
 
 
         for bond in mol.GetBonds():
@@ -126,14 +126,15 @@ def mol2feature(mol: Chem.Mol) -> Data:
 class MolGraph(Data):
     def __init__(self, x=None, edge_index=None,
                 edge_attr=None, rev_edge=None,
-                atom_type=None, y=None):
+                atom_type=None, y=None, y_mask=None):
         super().__init__(
             x=x,
             edge_index=edge_index,
             edge_attr=edge_attr,
             rev_edge=rev_edge,
             atom_type=atom_type,
-            y=y
+            y=y,
+            y_mask=y_mask
         )
 
         # for pretrain variables
@@ -225,9 +226,10 @@ def create_ssl_dataloader(path, batch_size=64,
     return loader
 
 
+
 if __name__ == "__main__":
     import time
-    smiles = Chem.SDMolSupplier(ROOT+"dataset/test_dataset/Compound_000000001_000500000.sdf")
+    smiles = Chem.SDMolSupplier(ROOT+"dataset/raw/Compound_000000001_000500000.sdf")
 
     # for i, mol in enumerate(smiles):
     #     if mol is None:

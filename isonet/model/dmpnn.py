@@ -8,7 +8,8 @@ from isonet.data.dataset import MolGraph
 
 __all__ = [
     "DMPNN",
-    "SSLModel"
+    "SSLModel",
+    "IsonetModel"
 ]
 
 
@@ -111,14 +112,14 @@ class FeedForward(nn.Module):
 
 
 
-class AtomHead(nn.Module):
-    def __init__(self, hidden, out_dim):
-        super().__init__()
-        self.classifier = nn.Linear(hidden, out_dim)
+# class AtomHead(nn.Module):
+#     def __init__(self, hidden, out_dim):
+#         super().__init__()
+#         self.classifier = nn.Linear(hidden, out_dim)
 
-    def forward(self, x):
-        x = self.classifier(x)
-        return x
+#     def forward(self, x):
+#         x = self.classifier(x)
+#         return x
 
 
 
@@ -140,7 +141,7 @@ class TaskHead(nn.Module):
             nn.Linear(hidden_dim, hidden_dim),
             nn.ReLU(),
             nn.Dropout(drop_rate),
-            nn.Linear(hidden_dim,1)
+            nn.Linear(hidden_dim, hidden_dim)
         )
 
 
@@ -150,22 +151,16 @@ class TaskHead(nn.Module):
 
 
 class ADMETHead(nn.Module):
-    def __init__(self, hidden_dim, drop_rate):
+    def __init__(self, hidden_dim, drop_rate, num_endpoint):
         super().__init__()
-        self.a_head = TaskHead(hidden_dim, drop_rate)
-        self.d_head = TaskHead(hidden_dim, drop_rate)
-        self.m_head = TaskHead(hidden_dim, drop_rate)
-        self.e_head = TaskHead(hidden_dim, drop_rate)
-        self.t_head = TaskHead(hidden_dim, drop_rate)
+        self.temp_head = TaskHead(hidden_dim, drop_rate)
+
+        self.output = nn.Linear(hidden_dim, num_endpoint)
 
     def forward(self, x):
-        a = self.a_head(x)
-        d = self.d_head(x)
-        m = self.m_head(x)
-        e = self.e_head(x)
-        t = self.t_head(x)
-
-        return a,d,m,e,t
+        x = self.temp_head(x)
+        logits = self.output(x)
+        return logits
 
 
 
@@ -193,3 +188,34 @@ class SSLModel(nn.Module):
         h_mask = h[data.mask_idx]
         out = self.head(h_mask)
         return out
+
+
+class IsonetModel(nn.Module):
+    def __init__(self, atom_dim: int, bond_dim: int, 
+                 dmpnn_hidden_dim: int, admet_hidden_dim: int, num_endpoint: int,
+                 drop_rate: float, depth: int):
+        super().__init__()
+
+        self.encoder = DMPNN(
+            atom_dim,
+            bond_dim,
+            dmpnn_hidden_dim,
+            depth
+        )
+
+        self.head = ADMETHead(
+            admet_hidden_dim,
+            drop_rate,
+            num_endpoint
+        )
+
+
+    def forward(self, data: MolGraph):
+        h = self.encoder(data)
+
+        h = global_add_pool(h, data.batch)
+
+        logits = self.head(h)
+
+        return logits
+    
