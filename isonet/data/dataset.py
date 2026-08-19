@@ -42,6 +42,7 @@ BOND_TYPES = [
 
 BOND_STEREOS = [0, 1, 2, 3, 4, 5]
 
+
 def one_hot_unknown(value, choices):
     """choices + unknown slot"""
     out = torch.zeros(len(choices) + 1)
@@ -95,10 +96,10 @@ def atom_feature(atom: Chem.Atom, use_stereo=True) -> Tensor:
     return feature
 
 
-def bond_feature(bond: Chem.Bond, use_stereo=True):
+def bond_feature(bond: Chem.Bond, use_stereo=True) -> Tensor:
     null = torch.tensor([0.0])    # null bit
     # 4 bond types
-    bond_type = torch.tensor([float(bond.GetBondType() == bt)for bt in BOND_TYPES])
+    bond_type = torch.tensor([float(bond.GetBondType() == bt) for bt in BOND_TYPES])
     conjugated = torch.tensor([float(bond.GetIsConjugated())])
     ring = torch.tensor([float(bond.IsInRing())])
     # 6 stereo + unknown = 7
@@ -120,18 +121,18 @@ def bond_feature(bond: Chem.Bond, use_stereo=True):
     return feature
 
 
-def mol2feature(mol: Chem.Mol) -> Data:
-    edge_attr    = []
-    edge_index   = []
+def mol2feature(mol: Chem.Mol, use_stereo=True) -> Data:
+    edge_attr   = []
+    edge_index  = []
     
-    node_feature = [atom_feature(atom) for atom in mol]
+    node_feature = [atom_feature(atom, use_stereo) for atom in mol]
 
     for bond in mol.GetBonds():
         bond: Chem.rdchem.Bond
         i = bond.GetBeginAtomIdx()
         j = bond.GetEndAtomIdx()
 
-        bond_features = bond_feature(bond)
+        bond_features = bond_feature(bond, use_stereo)
 
         edge_index.append([i, j])
         edge_index.append([j, i])
@@ -221,25 +222,6 @@ class SSLDataset(Dataset):
         data.x[mask_idx] = 0
 
         return data
-
-
-# def create_dataloader(dataset, batch_size, IsPretrain=True, IsShffle=True) -> DataLoader:
-#     dataset = [
-#         MolGraph(data) for data in tqdm(dataset, desc="loading")
-#     ]
-
-#     if IsPretrain:
-#         dataset = list(map(mask_atom, dataset))
-
-#     dataset = MoleculeDataset(dataset)
-
-#     data_loader = DataLoader(
-#         dataset=dataset,
-#         batch_size=batch_size,
-#         shuffle=IsShffle
-#     )
-#     return data_loader
-
 
 def create_ssl_dataloader(path, batch_size=64,
                           mask_ratio=0.15, shuffle=True):
