@@ -6,6 +6,7 @@ import torch
 
 from isonet.config import ROOT
 from isonet.data.dataset import MolGraph, mol2feature
+from isonet.data.dataset_validation import *
 
 
 allowed_atoms = {
@@ -16,18 +17,6 @@ def mol2graph(mol, y=None, y_mask=None): # 수정중
     # RDKit 변환 실패
     if mol is None:
         return None
-
-    # if any(
-    #     atom.GetAtomicNum() not in allowed_atoms
-    #     for atom in mol.GetAtoms()
-    # ):
-    #     return None
-        
-
-    # # 결합 없는 원자/이온 제거
-    # if mol.GetNumBonds() == 0:
-    #     return None
-
     
     graph = MolGraph(*mol2feature(mol))
 
@@ -54,41 +43,49 @@ class SDFReader:
     
 
 
-def makeMolGraph(reader, output_path, max_len=None) -> list:
+def makeMolGraph(reader, output_path, validator: MolValidator, max_len=None) -> list:
     graphs = []
     removed = 0
-    for mol, target in tqdm(reader, desc="processing", mininterval=0.3):
-        if (max_len is not None) and (len(graphs) > max_len):
-            break 
+    with RDKitLogCapture() as log:
+        for mol, target in tqdm(reader, desc="processing", mininterval=0.3):
+            if (max_len is not None) and (len(graphs) > max_len):
+                break 
+            logs = log.get()
 
-        if target is None:
-            graph = mol2graph(mol)
-        else: 
-            y, y_mask = target
-            graph = mol2graph(mol, y, y_mask)
+            if not validator.validate(mol, logs):
+                continue
 
 
-        if graph == None:
-            removed += 1
-        else:
-            graphs.append(graph)
+            if target is None:
+                graph = mol2graph(mol)
+            else: 
+                y, y_mask = target
+                graph = mol2graph(mol, y, y_mask)
+
+
+            if graph == None:
+                removed += 1
+            else:
+                graphs.append(graph)
 
     torch.save(graphs, output_path)
 
     print("====================")
     print(f"saved : {len(graphs)}")
-    print(f"removed : {removed}")
+    validator.report()
     print(f"path : {output_path}")
 
 
 
 if __name__ == "__main__":
     input_path = ROOT + "dataset/raw/Compound_000000001_000500000.sdf"
-    output_path = ROOT + "dataset/processed_data/testpy.pt"
+    output_path = ROOT + "dataset/processed_data/clean_dataset.pt"
 
     reader = SDFReader(input_path)
-    print(len(reader))
-    # makeMolGraph(reader, output_path)
+    validator = MolValidator(allowed_atoms)
+    
+
+    makeMolGraph(reader, output_path, validator)
 
 
         # print(i, Chem.MolToSmiles(mol))

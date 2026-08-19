@@ -15,32 +15,42 @@ from torch_geometric.data import Data, Dataset
 from isonet.utils.path import str2path
 from isonet.config import ROOT
 
-ATOM_TYPES = {
-    1:0,    # H
-    6:1,    # C
-    7:2,    # N
-    8:3,    # O
-    9:4,    # F
-    15:5,   # P
-    16:6,   # S
-    17:7,   # Cl
-    35:8,   # Br
-    53:9    # I
-}
-BOND_TYPES = {
-    1.0:0,
-    2.0:1,
-    3.0:2,
-    1.5:3
-}
 
+# Chemprop v2 기준
+ATOM_NUMS = list(range(1, 37)) + [53]  # H ~ Kr + I
+DEGREES = [0, 1, 2, 3, 4, 5]
+FORMAL_CHARGES = [-2, -1, 0, 1, 2]
+CHIRAL_TAGS = [0, 1, 2, 3]
+NUM_HS = [0, 1, 2, 3, 4]
 
-def one_hot(value, mapping):
-    idx = mapping.get(value, len(mapping))
-    return F.one_hot(
-        torch.tensor(idx),
-        num_classes=len(mapping)+1   # +1 = unknown
-    ).float()
+HYBRIDIZATIONS = [
+    Chem.rdchem.HybridizationType.S,
+    Chem.rdchem.HybridizationType.SP,
+    Chem.rdchem.HybridizationType.SP2,
+    Chem.rdchem.HybridizationType.SP2D,
+    Chem.rdchem.HybridizationType.SP3,
+    Chem.rdchem.HybridizationType.SP3D,
+    Chem.rdchem.HybridizationType.SP3D2,
+]
+
+BOND_TYPES = [
+    Chem.rdchem.BondType.SINGLE,
+    Chem.rdchem.BondType.DOUBLE,
+    Chem.rdchem.BondType.TRIPLE,
+    Chem.rdchem.BondType.AROMATIC,
+]
+
+BOND_STEREOS = [0, 1, 2, 3, 4, 5]
+
+def one_hot_unknown(value, choices):
+    """choices + unknown slot"""
+    out = torch.zeros(len(choices) + 1)
+    try:
+        idx = choices.index(value)
+    except ValueError:
+        idx = len(choices)
+    out[idx] = 1.0
+    return out
 
 
 def build_reverse_edge_index(edge_index: list) -> list:
@@ -54,72 +64,91 @@ def build_reverse_edge_index(edge_index: list) -> list:
 
     return rev_edge
 
+def atom_feature(atom: Chem.Atom, use_stereo=True) -> Tensor:
+    atomic_num = one_hot_unknown(atom.GetAtomicNum(), ATOM_NUMS)              # 1. atomic number: 37 + unknown = 38
+    degree = one_hot_unknown(atom.GetDegree(), DEGREES)                       # 2. degree: 6 + unknown = 
+    charge = one_hot_unknown(atom.GetFormalCharge(), FORMAL_CHARGES)          # 3. formal charge: 5 + unknown = 6
+
+    if use_stereo:                                                            # 4. chirality: 4 + unknown = 5
+        chirality = one_hot_unknown(int(atom.GetChiralTag()), CHIRAL_TAGS)
+    else:
+        chirality = torch.zeros(5) # 중요: 제거하지 말고 5차원 그대로 0
+        
+    num_h = one_hot_unknown(atom.GetTotalNumHs(), NUM_HS)                     # 5. H count: 5 + unknown = 6
+    hybridization = one_hot_unknown(atom.GetHybridization(), HYBRIDIZATIONS)  # 6. hybridization: 7 + unknown = 8
+    aromatic = torch.tensor([float(atom.GetIsAromatic())])                    # 7. aromatic: 1 
+    mass = torch.tensor([atom.GetMass() / 100.0])                             # 8. mass: 1
+
+    feature = torch.cat([
+        atomic_num,       # 38
+        degree,           # 7
+        charge,           # 6
+        chirality,        # 5
+        num_h,            # 6
+        hybridization,    # 8
+        aromatic,         # 1
+        mass,             # 1
+    ])
+
+    assert feature.shape[0] == 72
+
+    return feature
+
+
+def bond_feature(bond: Chem.Bond, use_stereo=True):
+    null = torch.tensor([0.0])    # null bit
+    # 4 bond types
+    bond_type = torch.tensor([float(bond.GetBondType() == bt)for bt in BOND_TYPES])
+    conjugated = torch.tensor([float(bond.GetIsConjugated())])
+    ring = torch.tensor([float(bond.IsInRing())])
+    # 6 stereo + unknown = 7
+    if use_stereo:
+        stereo = one_hot_unknown(int(bond.GetStereo()), BOND_STEREOS)
+    else:
+        stereo = torch.zeros(7)
+
+    feature = torch.cat([
+        null,          # 1
+        bond_type,     # 4
+        conjugated,    # 1
+        ring,          # 1
+        stereo,        # 7
+    ])
+
+    assert feature.shape[0] == 14
+
+    return feature
+
 
 def mol2feature(mol: Chem.Mol) -> Data:
-        node_feature = []
-        edge_attr    = []
-        edge_index   = []
+    edge_attr    = []
+    edge_index   = []
+    
+    node_feature = [atom_feature(atom) for atom in mol]
 
-        
-        node_feature = [
-            torch.cat([
-                one_hot(atom.GetAtomicNum(), ATOM_TYPES), # 원소
-                F.one_hot(
-                    torch.tensor(atom.GetDegree()),
-                    num_classes=7
-                ).float(),                                     # 결합 수
-                F.one_hot(
-                    torch.tensor(atom.GetFormalCharge()+5),
-                    num_classes=11
-                ).float(),                                    # 전하 -5~5
-                F.one_hot(
-                    torch.tensor(atom.GetTotalNumHs()),
-                    num_classes=5
-                ).float(),                                     # H 개수
-                torch.tensor([
-                    atom.GetMass()/100,
-                    int(atom.GetIsAromatic())
-                ], dtype=torch.float)
-            ])
-            for atom in mol.GetAtoms()
-        ]   
+    for bond in mol.GetBonds():
+        bond: Chem.rdchem.Bond
+        i = bond.GetBeginAtomIdx()
+        j = bond.GetEndAtomIdx()
+
+        bond_features = bond_feature(bond)
+
+        edge_index.append([i, j])
+        edge_index.append([j, i])
+        edge_attr.append(bond_features)
+        edge_attr.append(bond_features)
+
+    rev_edge = build_reverse_edge_index(edge_index)
+    atom_type = torch.tensor([atom.GetAtomicNum() for atom in mol.GetAtoms()])
 
 
-        for bond in mol.GetBonds():
-            bond: Chem.rdchem.Bond
-            i = bond.GetBeginAtomIdx()
-            j = bond.GetEndAtomIdx()
+    x = torch.stack(node_feature).float()
+    edge_index = torch.tensor(edge_index, dtype=torch.long).t().contiguous()
+    edge_attr = torch.stack(edge_attr).float()
+    rev_edge = torch.tensor(rev_edge, dtype=torch.long)
+    
 
-            bond_feature = torch.cat([
-                one_hot(
-                    bond.GetBondTypeAsDouble(),
-                    BOND_TYPES
-                ),
-                torch.tensor([
-                    int(bond.GetIsConjugated()),
-                    int(bond.IsInRing())
-                ], dtype=torch.float)
-            ])
-
-            edge_index.append([i, j])
-            edge_index.append([j, i])
-            edge_attr.append(bond_feature)
-            edge_attr.append(bond_feature)
-
-        rev_edge = build_reverse_edge_index(edge_index)
-
-        atom_type = torch.tensor(
-            [ATOM_TYPES[atom.GetAtomicNum()] for atom in mol.GetAtoms()]
-        )
-
-
-        x = torch.stack(node_feature).to(torch.float)
-        edge_index = torch.tensor(edge_index, dtype=torch.long).t().contiguous()
-        edge_attr = torch.stack(edge_attr).float()
-        rev_edge = torch.tensor(rev_edge, dtype=torch.long)
-        
-
-        return x, edge_index, edge_attr, rev_edge, atom_type
+    return x, edge_index, edge_attr, rev_edge, atom_type
 
 
 
